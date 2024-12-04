@@ -69,3 +69,33 @@ func ExitPlugin(status *IcingaStatus) {
 	fmt.Fprintln(os.Stdout, status.Value.String()+": "+status.Message)
 	os.Exit(int(status.Value))
 }
+
+func CheckConnection(params *g.GoSNMP) error {
+
+	err := params.Connect()
+	if err != nil {
+		return fmt.Errorf("Error when connecting: %w", err)
+	}
+	defer params.Conn.Close()
+
+	pdu, err := params.Get([]string{"1.3.6.1.2.1.1.5.0"}) // sysName
+	if err != nil {
+		return fmt.Errorf("Error when attempting to get sysName: %w", err)
+	}
+
+	if pdu.Error != g.NoError {
+		return fmt.Errorf("SNMP Error: %v\n", pdu.Error)
+	}
+
+	return nil
+}
+
+func DebugPrint(pdu g.SnmpPDU) {
+	switch pdu.Type {
+	case g.OctetString:
+		b := pdu.Value.([]byte)
+		fmt.Printf("STRING: %s\n", string(b))
+	default:
+		fmt.Printf("TYPE %v: %d\n", g.Asn1BER(pdu.Type), g.ToBigInt(pdu.Value))
+	}
+}
