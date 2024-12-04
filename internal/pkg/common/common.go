@@ -1,0 +1,71 @@
+package common
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+
+	g "github.com/gosnmp/gosnmp"
+	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
+
+	. "github.com/jamiereid/go-icingaplugins/internal/pkg/common/types"
+)
+
+func LogFlags() {
+	for key, value := range viper.GetViper().AllSettings() {
+		log.WithFields(log.Fields{
+			key: value,
+		}).Info("Command Flag")
+	}
+}
+
+func BulkWalkToMap(conn *g.GoSNMP, oid string) (map[int]interface{}, error) {
+	var returnMap = make(map[int]interface{})
+
+	// @TODO: Check for start and end in "." - only concat if we need to
+	prefixBytes := []byte("." + oid + ".")
+	err := conn.BulkWalk(oid, func(pdu g.SnmpPDU) error {
+		if pdu.Value == nil {
+			return fmt.Errorf("recieved a PDU with a nil value")
+		}
+
+		nameBytes := []byte(pdu.Name)
+		if len(nameBytes) <= len(prefixBytes) || string(nameBytes[:len(prefixBytes)]) != string(prefixBytes) {
+			return fmt.Errorf("unexpected OID format: %s", pdu.Name)
+		}
+
+		keyPart := nameBytes[len(prefixBytes):]
+		key, err := strconv.Atoi(string(keyPart))
+		if err != nil {
+			return fmt.Errorf("failed to cast index to int: %w", err)
+		}
+
+		switch pdu.Type {
+		case g.OctetString:
+			returnMap[key] = string(pdu.Value.([]byte))
+		case g.Integer:
+			returnMap[key] = pdu.Value.(int)
+		case g.Counter32, g.Gauge32, g.TimeTicks:
+			returnMap[key] = uint32(pdu.Value.(uint))
+		case g.Counter64:
+			returnMap[key] = pdu.Value.(uint64)
+		default:
+			return fmt.Errorf("unsupported SNMP type: %v", pdu.Type)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("error during BulkWalk: %w", err)
+	}
+
+	return returnMap, nil
+
+}
+
+func ExitPlugin(status *IcingaStatus) {
+	fmt.Fprintln(os.Stdout, status.Value.String()+": "+status.Message)
+	os.Exit(int(status.Value))
+}
