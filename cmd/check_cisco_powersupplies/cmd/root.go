@@ -35,10 +35,6 @@ var rootCmd = &cobra.Command{
 	Short: "Cisco power supplies module check plugin",
 	Long:  "",
 	Run: func(cmd *cobra.Command, args []string) {
-		if Debug {
-			common.LogFlags()
-		}
-
 		conn.Version = g.Version3
 		conn.SecurityModel = g.UserSecurityModel
 		conn.MsgFlags = seclevel.Value

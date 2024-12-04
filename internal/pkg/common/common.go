@@ -6,19 +6,9 @@ import (
 	"strconv"
 
 	g "github.com/gosnmp/gosnmp"
-	log "github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 
 	. "github.com/jamiereid/go-icingaplugins/internal/pkg/common/types"
 )
-
-func LogFlags() {
-	for key, value := range viper.GetViper().AllSettings() {
-		log.WithFields(log.Fields{
-			key: value,
-		}).Info("Command Flag")
-	}
-}
 
 func BulkWalkToMap(conn *g.GoSNMP, oid string) (map[int]interface{}, error) {
 	var returnMap = make(map[int]interface{})
