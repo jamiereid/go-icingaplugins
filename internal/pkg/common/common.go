@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	g "github.com/gosnmp/gosnmp"
 
@@ -98,7 +99,18 @@ func BulkWalkToMap(conn *g.GoSNMP, oid string) (map[int]interface{}, error) {
 }
 
 func ExitPlugin(status *IcingaStatus) {
-	fmt.Fprintln(os.Stdout, status.Value.String()+": "+status.Message)
+	var exitMsg strings.Builder
+
+	exitMsg.WriteString(status.Value.String())
+	exitMsg.WriteString(": ")
+	exitMsg.WriteString(status.Message)
+
+	if status.PerfData != "" {
+		exitMsg.WriteString(" | ")
+		exitMsg.WriteString(status.PerfData)
+	}
+
+	fmt.Fprintln(os.Stdout, exitMsg.String())
 	os.Exit(int(status.Value))
 }
 

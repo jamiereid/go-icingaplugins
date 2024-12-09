@@ -5,6 +5,9 @@ builddir := prjroot + "/bin"
 _default:
     @just --list
 
+build-check_cisco_memusage:
+  cd {{prjroot}}/cmd/check_cisco_memusage && go build -o {{builddir}}/check_cisco_memusage
+
 build-check_cisco_powersupplies:
   cd {{prjroot}}/cmd/check_cisco_powersupplies && go build -o {{builddir}}/check_cisco_powersupplies
 
@@ -14,7 +17,7 @@ build-check_cisco_powerstack:
 build-check_cisco_stackmodules:
   cd {{prjroot}}/cmd/check_cisco_stackmodules && go build -o {{builddir}}/check_cisco_stackmodules
 
-build-all: clean-build build-check_cisco_powersupplies build-check_cisco_stackmodules build-check_cisco_powerstack
+build-all: clean-build build-check_cisco_powersupplies build-check_cisco_stackmodules build-check_cisco_powerstack build-check_cisco_memusage
 
 # clean out the build directory
 clean-build:

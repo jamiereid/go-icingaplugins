@@ -27,6 +27,7 @@ func (c IcingaStatusVal) String() string {
 }
 
 type IcingaStatus struct {
-	Message string
-	Value   IcingaStatusVal
+	Message  string
+	PerfData string
+	Value    IcingaStatusVal
 }
