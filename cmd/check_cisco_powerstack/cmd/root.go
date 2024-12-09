@@ -28,8 +28,8 @@ const cswSwitchStateOID string = "1.3.6.1.4.1.9.9.500.1.2.1.1.6"
 const cswStackPowerPortLinkStatusOID string = "1.3.6.1.4.1.9.9.500.1.3.2.1.5"
 
 var rootCmd = &cobra.Command{
-	Use:   "check_cisco_powersupplies",
-	Short: "Cisco power supplies module check plugin",
+	Use:   "check_cisco_powerstack",
+	Short: "Cisco power stack check plugin",
 	Long:  "",
 	Run: func(cmd *cobra.Command, args []string) {
 		conn.Version = g.Version3
