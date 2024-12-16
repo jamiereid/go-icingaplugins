@@ -1,6 +1,8 @@
 prjroot := justfile_directory()
 builddir := prjroot + "/bin"
 
+export CGO_ENABLED := "0"
+
 # default recipe to display help
 _default:
     @just --list
