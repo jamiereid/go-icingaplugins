@@ -24,6 +24,7 @@ var authmode SnmpV3AuthProtocolValue
 var privmode SnmpV3PrivProtocolValue
 var doubleContainers bool
 var psuBuiltIn bool
+var psuExpectedOverrideValue uint8
 
 const entPhysicalDescrOID string = "1.3.6.1.2.1.47.1.1.1.1.2"
 const entPhysicalClassOID string = "1.3.6.1.2.1.47.1.1.1.1.5"
@@ -62,13 +63,13 @@ var rootCmd = &cobra.Command{
 			return
 		}
 		entPhysicalDescr := make(map[int]string)
-		for k, v := range result {
-			strv, ok := v.(string)
+		for it_index, it := range result {
+			v, ok := it.(string)
 			if !ok {
-				fmt.Printf("Value for key %d is not a string: %v\n", k, v)
+				fmt.Printf("Value for key %d is not a string: %v\n", it_index, it)
 				continue
 			}
-			entPhysicalDescr[k] = strv
+			entPhysicalDescr[it_index] = v
 		}
 
 		// get entPhysicalClass
@@ -78,13 +79,13 @@ var rootCmd = &cobra.Command{
 			return
 		}
 		entPhysicalClass := make(map[int]SnmpIanaPhysicalClass)
-		for k, v := range result {
-			nv, ok := v.(int)
+		for it_index, it := range result {
+			v, ok := it.(int)
 			if !ok {
-				fmt.Printf("Value for key %d is not an int: %v\n", k, v)
+				fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
 				continue
 			}
-			entPhysicalClass[k] = SnmpIanaPhysicalClass(nv)
+			entPhysicalClass[it_index] = SnmpIanaPhysicalClass(v)
 		}
 
 		// get ps state - this is different depending on what type of device.
@@ -93,61 +94,76 @@ var rootCmd = &cobra.Command{
 		var ciscoEnvMonSupplyState map[int]SnmpCiscoEnvMonState
 		var cefcFruPowerOperStatus map[int]SnmpPowerOperType
 		if psuBuiltIn {
+
 			// get ciscoEnvMonSupplyState
 			result, err = common.BulkWalkToMap(&conn, ciscoEnvMonSupplyStateOID)
 			if err != nil {
 				log.Fatalf("Error: %v\n", err)
 				return
 			}
+
 			ciscoEnvMonSupplyState = make(map[int]SnmpCiscoEnvMonState)
-			for k, v := range result {
-				nv, ok := v.(int)
+			for it_index, it := range result {
+				v, ok := it.(int)
 				if !ok {
-					fmt.Printf("Value for key %d is not an int: %v\n", k, v)
+					fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
 					continue
 				}
-				ciscoEnvMonSupplyState[k] = SnmpCiscoEnvMonState(nv)
+				ciscoEnvMonSupplyState[it_index] = SnmpCiscoEnvMonState(v)
 			}
+
 		} else {
+
 			// get cefcFruPowerOperStatus
 			result, err = common.BulkWalkToMap(&conn, cefcFruPowerOperStatusOID)
 			if err != nil {
 				log.Fatalf("Error: %v\n", err)
 				return
 			}
+
 			cefcFruPowerOperStatus = make(map[int]SnmpPowerOperType)
-			for k, v := range result {
-				nv, ok := v.(int)
+			for it_index, it := range result {
+				v, ok := it.(int)
 				if !ok {
-					fmt.Printf("Value for key %d is not an int: %v\n", k, v)
+					fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
 					continue
 				}
-				cefcFruPowerOperStatus[k] = SnmpPowerOperType(nv)
+				cefcFruPowerOperStatus[it_index] = SnmpPowerOperType(v)
 			}
+
 		}
 
-		// collect indices of power supplies
 		var psuIndices []int
-		for i, t := range entPhysicalClass {
-			if t == IanaPhysicalClassPowerSupply {
-				psuIndices = append(psuIndices, i)
+		for it_index, it := range entPhysicalClass {
+			if it == IanaPhysicalClassPowerSupply {
+				psuIndices = append(psuIndices, it_index)
 			}
 		}
 
-		// collect indices of power supply containers
 		var psuContainers []int
-		for i, v := range entPhysicalDescr {
-			match, err := regexp.MatchString(`.*Power\ Supply.*Container.*`, v)
+		for it_index, it := range entPhysicalDescr {
+			match, err := regexp.MatchString(`.*Power\ Supply.*Container.*`, it) // @Hardcoded
 			if err != nil {
 				fmt.Println("Error compiling regex: ", err)
 			}
 			if match {
-				psuContainers = append(psuContainers, i)
+				psuContainers = append(psuContainers, it_index)
+			}
+		}
+
+		if len(psuContainers) == 0 {
+			// ME-3800 at least needs this @Hack
+			for it_index, it := range entPhysicalDescr {
+				if it == "FRU Power Supply" {
+					psuContainers = append(psuContainers, it_index)
+				}
 			}
 		}
 
 		var numberOfExpectedPsus int
-		if doubleContainers {
+		if psuExpectedOverrideValue > 0 {
+			numberOfExpectedPsus = int(psuExpectedOverrideValue)
+		} else if doubleContainers {
 			numberOfExpectedPsus = 2 * len(psuContainers)
 		} else {
 			numberOfExpectedPsus = len(psuContainers)
@@ -156,6 +172,11 @@ var rootCmd = &cobra.Command{
 		numberOfPsus := len(psuIndices)
 		switch {
 		case numberOfPsus == numberOfExpectedPsus:
+			if numberOfExpectedPsus == 1 {
+				// it's only possible to get here if the device is online.
+				common.ExitPlugin(&IcingaStatus{Value: IcingaOK, Message: fmt.Sprintf("All (%d) PSUs are present and 'ON'.", numberOfPsus)})
+			}
+
 			// Check PSUs have 'on' state
 			for _, it := range psuIndices {
 				if psuBuiltIn {
@@ -207,6 +228,7 @@ func init() {
 	// check specific flags
 	rootCmd.PersistentFlags().BoolVar(&doubleContainers, "double-containers", false, "Some models report 1 container per powersupply (as you'd expect), others report 1 per switch. This flag is for the later.")
 	rootCmd.PersistentFlags().BoolVar(&psuBuiltIn, "psu-built-in", false, "Some switches have built in PSUs, these need to be checked differently")
+	rootCmd.PersistentFlags().Uint8Var(&psuExpectedOverrideValue, "expected-psu-override", 0, "Override expected number of PSUs (leave as 0 to determine automatically")
 }
 
 func Execute() {
