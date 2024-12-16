@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jamiereid/go-icingaplugins/internal/pkg/common"
@@ -58,13 +59,13 @@ var rootCmd = &cobra.Command{
 			return
 		}
 		cswSwitchState := make(map[int]SnmpCswSwitchState)
-		for k, v := range result {
-			v, ok := v.(int)
+		for it_index, it := range result {
+			v, ok := it.(int)
 			if !ok {
-				fmt.Printf("Value for key %d is not an int: %v\n", k, v)
+				fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
 				continue
 			}
-			cswSwitchState[k] = SnmpCswSwitchState(v)
+			cswSwitchState[it_index] = SnmpCswSwitchState(v)
 		}
 
 		// get cswStackPortOperStatus (stack port state)
@@ -74,13 +75,13 @@ var rootCmd = &cobra.Command{
 			return
 		}
 		cswStackPortOperStatus := make(map[int]SnmpCswStackPortOperStatus)
-		for k, v := range result {
-			v, ok := v.(int)
+		for it_index, it := range result {
+			v, ok := it.(int)
 			if !ok {
-				fmt.Printf("Value for key %d is not an int: %v\n", k, v)
+				fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
 				continue
 			}
-			cswStackPortOperStatus[k] = SnmpCswStackPortOperStatus(v)
+			cswStackPortOperStatus[it_index] = SnmpCswStackPortOperStatus(v)
 		}
 
 		// Assume everything is ok, then check this assumption (See Exit below is changing this code)
@@ -88,32 +89,50 @@ var rootCmd = &cobra.Command{
 		var switchStates []SnmpCswSwitchState
 		var stackPortStatuses []SnmpCswStackPortOperStatus
 
-		for _, v := range cswSwitchState {
-			if v != SnmpCswSwitchStateReady && exitStatus != IcingaWARN {
+		for _, it := range cswSwitchState {
+			if it != SnmpCswSwitchStateReady && exitStatus != IcingaWARN {
 				exitStatus = IcingaWARN
 			}
-			switchStates = append(switchStates, v)
+			switchStates = append(switchStates, it)
 		}
 
-		for _, v := range cswStackPortOperStatus {
-			if v != SnmpCswStackPortOperStatusUp && exitStatus != IcingaWARN {
+		for _, it := range cswStackPortOperStatus {
+			if it != SnmpCswStackPortOperStatusUp && exitStatus != IcingaWARN {
 				exitStatus = IcingaWARN
 			}
-			stackPortStatuses = append(stackPortStatuses, v)
+			stackPortStatuses = append(stackPortStatuses, it)
 		}
 
 		// Exit
-		var exitMsg string
+		var exitMsg strings.Builder
 
-		// @NOTE: this is not exhaustive, it has an @ASSUMPTION that this plug only ever exits WARN or OK
+		// @Note: this is not exhaustive, it has an @Assumption that this plug in only ever exits WARN or OK
 		switch exitStatus {
 		case IcingaWARN:
-			exitMsg = fmt.Sprintf("Switch states: \"%s\", Stack port statuses: \"%s\"", switchStates, stackPortStatuses)
+
+			exitMsg.WriteString("Switch states are \"")
+			for it_index, it := range switchStates {
+				if it_index > 0 {
+					exitMsg.WriteString(", ")
+				}
+				exitMsg.WriteString(strings.TrimPrefix(it.String(), "SnmpCswSwitchState")) // @Speed
+			}
+
+			exitMsg.WriteString("\"; Stack port statuses are \"")
+			for it_index, it := range stackPortStatuses {
+				if it_index > 0 {
+					exitMsg.WriteString(", ")
+				}
+				exitMsg.WriteString(strings.TrimPrefix(it.String(), "SnmpCswStackPortOperState")) // @Speed
+			}
+
+			exitMsg.WriteString("\"")
+
 		case IcingaOK:
-			exitMsg = fmt.Sprintf("%d switches are \"ready\" and %d stack ports are up", len(switchStates), len(stackPortStatuses))
+			exitMsg.WriteString(fmt.Sprintf("%d switches are \"ready\" and %d stack ports are up", len(switchStates), len(stackPortStatuses)))
 		}
 
-		common.ExitPlugin(&IcingaStatus{Value: exitStatus, Message: exitMsg})
+		common.ExitPlugin(&IcingaStatus{Value: exitStatus, Message: exitMsg.String()})
 
 	},
 }
@@ -121,13 +140,11 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "d", false, "Print debug information")
 
-	// connection flags
 	rootCmd.PersistentFlags().StringVarP(&conn.Target, "host", "H", "", "Hostname or IP address to run the check against (required)")
 	rootCmd.MarkPersistentFlagRequired("host")
 	rootCmd.PersistentFlags().Uint16VarP(&conn.Port, "port", "p", 161, "Port remote device SNMP agent is listening on")
 	rootCmd.PersistentFlags().IntVarP(&timeout, "timeout", "t", 10, "Seconds to wait before timing out")
 
-	// snmpv3 flags
 	rootCmd.PersistentFlags().StringVarP(&secparams.UserName, "user", "u", "", "SNMPv3 user name (required)")
 	rootCmd.MarkPersistentFlagRequired("user")
 	rootCmd.PersistentFlags().VarP(&seclevel, "seclevel", "l", "SNMPv3 Security Level")
