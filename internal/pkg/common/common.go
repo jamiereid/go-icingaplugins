@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -163,7 +164,9 @@ func GetDeviceModel(params *g.GoSNMP) (*CiscoModelFamily, string, error) {
 	// If we can take an early out and avoid looping over the entPhysicalClass slice to find a
 	// chassis, then do so - otherwise, we are either checking a stack (IanaPhysicalClassStack)
 	// or we are checking agaist a model that doesn't index from 1.
+	//
 	var entIndex = 1
+	var moduleEntIndex = 0
 	if entPhysicalClass[1] != IanaPhysicalClassChassis {
 		//
 		// in our environment, it's ok to assume that all stack chassis are in the
@@ -178,6 +181,17 @@ func GetDeviceModel(params *g.GoSNMP) (*CiscoModelFamily, string, error) {
 			}
 		}
 	}
+	// :4500Hack
+	// 4500 series routers don't seem to populate the entPhysicalModelName for IanaPhysicalClassChassis
+	// so we collect an index for an IanaPhysicalClassModule
+	// This means our early out above is kinda pointless... :(
+	// This whole section could do with more @Robustness
+	for it_index, it := range entPhysicalClass {
+		if it == IanaPhysicalClassModule {
+			moduleEntIndex = it_index
+			break
+		}
+	}
 
 	pdu, err := params.Get([]string{fmt.Sprintf("1.3.6.1.2.1.47.1.1.1.1.13.%v", entIndex)}) // entPhysicalModelName
 	if err != nil {
@@ -190,6 +204,22 @@ func GetDeviceModel(params *g.GoSNMP) (*CiscoModelFamily, string, error) {
 
 	if pdu.Variables[0].Type == g.NoSuchInstance {
 		return nil, "", fmt.Errorf("SNMP Response: No Such Instance\n")
+	}
+
+	// :4500Hack
+	if bytes.Equal(pdu.Variables[0].Value.([]uint8), []uint8{32, 32}) {
+		pdu, err = params.Get([]string{fmt.Sprintf("1.3.6.1.2.1.47.1.1.1.1.13.%v", moduleEntIndex)}) // entPhysicalModelName
+		if err != nil {
+			return nil, "", fmt.Errorf("Error when attempting to get entPhysicalModelName.%v: %w", moduleEntIndex, err)
+		}
+
+		if pdu.Error != g.NoError {
+			return nil, "", fmt.Errorf("SNMP Error: %v\n", pdu.Error.String())
+		}
+
+		if pdu.Variables[0].Type == g.NoSuchInstance {
+			return nil, "", fmt.Errorf("SNMP Response: No Such Instance\n")
+		}
 	}
 
 	// this can probably be deleted once we know the changes above are ok. @Cleanup

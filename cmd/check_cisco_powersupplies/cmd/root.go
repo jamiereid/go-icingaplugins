@@ -88,7 +88,7 @@ var rootCmd = &cobra.Command{
 		case CiscoModelFamily3800:
 			modelRequiresUseOfCiscoEnvMonSupplyStateTable = true
 			patternForPSUContainer = regexp.MustCompile(`^FRU\ Power\ Supply$`)
-		case CiscoModelFamily4500:
+		case CiscoModelFamily4500, CiscoModelFamily4500X:
 			patternForPSUContainer = regexp.MustCompile(`^Container\ of\ Power\ Supply$`)
 		case CiscoModelFamily6800:
 			patternForPSUContainer = regexp.MustCompile(`^Chassis\ \d\ Container\ of\ Power\ Supply\ \d$`)

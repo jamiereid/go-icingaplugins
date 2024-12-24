@@ -9,6 +9,7 @@ const (
 	CiscoModelFamily9300
 	CiscoModelFamily9200
 	CiscoModelFamily6800
+	CiscoModelFamily4500X
 	CiscoModelFamily4500
 	CiscoModelFamily3850
 	CiscoModelFamily3800
@@ -29,8 +30,10 @@ func NewCiscoModelFamily(input string) CiscoModelFamily {
 		return CiscoModelFamily9300
 	case "9200", "C9200", "9200CX", "C9200CX":
 		return CiscoModelFamily9200
-	case "6880", "C6880":
+	case "6816", "C6816", "6880", "C6880":
 		return CiscoModelFamily6800
+	case "4500X", "C4500X":
+		return CiscoModelFamily4500X
 	case "4510", "C4510":
 		return CiscoModelFamily4500
 	case "3850", "C3850":
@@ -64,6 +67,8 @@ func (c CiscoModelFamily) String() string {
 		return "Cisco 9200 Family"
 	case CiscoModelFamily6800:
 		return "Cisco 6800 Family"
+	case CiscoModelFamily4500X:
+		return "Cisco 4500X Family"
 	case CiscoModelFamily4500:
 		return "Cisco 4500 Family"
 	case CiscoModelFamily3850:
