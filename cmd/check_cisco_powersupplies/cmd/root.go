@@ -24,6 +24,7 @@ var seclevel SnmpV3MsgFlagsValue
 var authmode SnmpV3AuthProtocolValue
 var privmode SnmpV3PrivProtocolValue
 var psuExpectedOverrideValue uint8
+var maxTimesToRetryModelQuery uint8
 
 const entPhysicalDescrOID string = "1.3.6.1.2.1.47.1.1.1.1.2"
 const entPhysicalClassOID string = "1.3.6.1.2.1.47.1.1.1.1.5"
@@ -53,13 +54,38 @@ var rootCmd = &cobra.Command{
 		// the quantity or status of power supplies.
 		//
 
-		deviceModelFamily, rawDeviceModel, err := common.GetDeviceModel(&conn)
-		if err != nil {
-			slog.Error("Problem when attempting to get the model of the device.", "error", err)
-			os.Exit(1)
+		// Sometimes, this initial call can succeed, but return an empty response - which
+		// stops us from proceeding. Hence, this retry code.
+
+		var (
+			deviceModelFamily *CiscoModelFamily
+			rawDeviceModel    string
+			err               error
+		)
+
+		for attempt := 1; attempt <= int(maxTimesToRetryModelQuery); attempt++ {
+			deviceModelFamily, rawDeviceModel, err = common.GetDeviceModel(&conn)
+			if err != nil {
+				slog.Error("Problem when attempting to get the model of the device.", "error", err)
+				os.Exit(1)
+			}
+
+			if rawDeviceModel != "" {
+				break // success
+			}
+
+			slog.Warn("Got empty model string; retrying...", "attempt", attempt)
+			time.Sleep(500 * time.Millisecond)
 		}
+
 		if *deviceModelFamily == CiscoModelFamilyUnknown {
-			slog.Error("This application doesn't yet know how to handle this model.", "model", rawDeviceModel)
+			var message string
+			if rawDeviceModel != "" {
+				message = "This application doesn't yet know how to handle this model."
+			} else {
+				message = "Recieved an empty string when quering for the model multiple times."
+			}
+			slog.Error(message, "model", rawDeviceModel)
 			os.Exit(1)
 		}
 		slog.SetDefault(slog.With("model", rawDeviceModel, "modelFamily", deviceModelFamily))
@@ -308,6 +334,7 @@ func init() {
 
 	// check specific flags
 	rootCmd.PersistentFlags().Uint8Var(&psuExpectedOverrideValue, "expected-psu-override", 0, "Override expected number of PSUs (leave as 0 to determine automatically")
+	rootCmd.PersistentFlags().Uint8Var(&maxTimesToRetryModelQuery, "max-model-query-retries", 2, "How many times to retry the initial query for model (at half second intervals)")
 }
 
 func Execute() {

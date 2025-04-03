@@ -4,6 +4,7 @@ type CiscoModelFamily uint8
 
 const (
 	CiscoModelFamilyUnknown CiscoModelFamily = iota
+	CiscoModelFamilyISR
 	CiscoModelFamily9500
 	CiscoModelFamily9300X
 	CiscoModelFamily9300
@@ -22,6 +23,8 @@ const (
 
 func NewCiscoModelFamily(input string) CiscoModelFamily {
 	switch input {
+	case "IR1101":
+		return CiscoModelFamilyISR
 	case "9500", "C9500":
 		return CiscoModelFamily9500
 	case "9300X", "C9300X":
@@ -57,6 +60,8 @@ func NewCiscoModelFamily(input string) CiscoModelFamily {
 
 func (c CiscoModelFamily) String() string {
 	switch c {
+	case CiscoModelFamilyISR:
+		return "Cisco ISR Family"
 	case CiscoModelFamily9500:
 		return "Cisco 9500 Family"
 	case CiscoModelFamily9300X:

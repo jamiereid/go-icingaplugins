@@ -203,7 +203,11 @@ func GetDeviceModel(params *g.GoSNMP) (*CiscoModelFamily, string, error) {
 	}
 
 	if pdu.Variables[0].Type == g.NoSuchInstance {
-		return nil, "", fmt.Errorf("SNMP Response: No Such Instance\n")
+		return nil, "", fmt.Errorf("SNMP Response: No Such Instance")
+	}
+
+	if pdu.Variables[0].Type == g.NoSuchObject {
+		return nil, "", fmt.Errorf("SNMP Response: No Such Object")
 	}
 
 	// :4500Hack
@@ -251,6 +255,9 @@ func GetDeviceModel(params *g.GoSNMP) (*CiscoModelFamily, string, error) {
 	}
 	if strings.HasSuffix(deviceModelAsString, "R+E") { // 4510 @Hack
 		deviceModelAsString = strings.TrimSuffix(deviceModelAsString, "R+E")
+	}
+	if strings.HasSuffix(deviceModelAsString, "-K9") {
+		deviceModelAsString = strings.TrimSuffix(deviceModelAsString, "-K9")
 	}
 
 	familyPart, _, _ := strings.Cut(deviceModelAsString, "-") // @Assumption: success
