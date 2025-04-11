@@ -15,6 +15,38 @@ import (
 
 const LevelTrace = slog.Level(-6)
 
+func SnmpGet(conn *g.GoSNMP, oid string) (any, error) {
+	pdu, err := conn.Get([]string{oid})
+	if err != nil {
+		return nil, fmt.Errorf("Error when attempting to get %s: %w", oid, err)
+	}
+
+	if pdu.Error != g.NoError {
+		return nil, fmt.Errorf("SNMP Error: %v", pdu.Error.String())
+	}
+
+	if pdu.Variables[0].Type == g.NoSuchInstance {
+		return nil, fmt.Errorf("SNMP Response: No Such Instance")
+	}
+
+	if pdu.Variables[0].Type == g.NoSuchObject {
+		return nil, fmt.Errorf("SNMP Response: No Such Object")
+	}
+
+	switch pdu.Variables[0].Type {
+	case g.OctetString:
+		return string(pdu.Variables[0].Value.([]byte)), nil
+	case g.Integer:
+		return pdu.Variables[0].Value.(int), nil
+	case g.Counter32, g.Gauge32, g.TimeTicks:
+		return uint32(pdu.Variables[0].Value.(uint)), nil
+	case g.Counter64:
+		return pdu.Variables[0].Value.(uint64), nil
+	default:
+		return nil, fmt.Errorf("unsupported SNMP type: %v", pdu.Variables[0].Type)
+	}
+}
+
 func BulkWalkToStringMap(conn *g.GoSNMP, oid string) (map[string]interface{}, error) {
 	var returnMap = make(map[string]interface{})
 

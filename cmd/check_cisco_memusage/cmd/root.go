@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"strings"
@@ -28,8 +28,8 @@ var timeout int
 var seclevel SnmpV3MsgFlagsValue
 var authmode SnmpV3AuthProtocolValue
 var privmode SnmpV3PrivProtocolValue
+var maxTimesToRetryModelQuery uint8
 
-var mib MemoryMibValue
 var warningThreshold uint32
 var criticalThreshold uint32
 
@@ -38,6 +38,8 @@ var rootCmd = &cobra.Command{
 	Short: "Cisco memory usage check plugin",
 	Long:  "",
 	Run: func(cmd *cobra.Command, args []string) {
+		slog.SetDefault(slog.With("target", conn.Target))
+
 		conn.Version = g.Version3
 		conn.SecurityModel = g.UserSecurityModel
 		conn.MsgFlags = seclevel.Value
@@ -47,33 +49,73 @@ var rootCmd = &cobra.Command{
 		secparams.PrivacyProtocol = privmode.Value
 		conn.SecurityParameters = secparams.Copy()
 
-		err := common.CheckConnection(&conn)
-		if err != nil {
-			log.Fatalf("%v", err)
+		//
+		// Some models need us to check different OIDs.
+		//
+		// Sometimes, this initial call can succeed, but return an empty response - which
+		// stops us from proceeding. Hence, this retry code.
+
+		var (
+			deviceModelFamily *CiscoModelFamily
+			rawDeviceModel    string
+			err               error
+		)
+
+		for attempt := 1; attempt <= int(maxTimesToRetryModelQuery); attempt++ {
+			deviceModelFamily, rawDeviceModel, err = common.GetDeviceModel(&conn)
+			if err != nil {
+				slog.Error("Problem when attempting to get the model of the device.", "error", err)
+				os.Exit(1)
+			}
+
+			if rawDeviceModel != "" {
+				break // success
+			}
+
+			slog.Warn("Got empty model string; retrying...", "attempt", attempt)
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		if *deviceModelFamily == CiscoModelFamilyUnknown {
+			var message string
+			if rawDeviceModel != "" {
+				message = "This application doesn't yet know how to handle this model."
+			} else {
+				message = "Recieved an empty string when quering for the model multiple times."
+			}
+			slog.Error(message, "model", rawDeviceModel)
+			os.Exit(1)
+		}
+		slog.SetDefault(slog.With("model", rawDeviceModel, "modelFamily", deviceModelFamily))
+
+		using_mib := MemoryMibCiscoProcessMib
+		used_memory_mib := cpmCpuMemoryUsedOID
+		free_memory_mib := cpmCpuMemoryFreeOID
+
+		switch *deviceModelFamily {
+		case CiscoModelFamily2960:
+		case CiscoModelFamily2960X:
+		case CiscoModelFamily3560:
+		case CiscoModelFamily3750X:
+		case CiscoModelFamily3800:
+		case CiscoModelFamily6800:
+			using_mib = MemoryMibCiscoMemoryPoolMib
+			used_memory_mib = ciscoMemoryPoolUsedOID
+			free_memory_mib = ciscoMemoryPoolFreeOID
 		}
 
 		err = conn.Connect()
 		if err != nil {
-			log.Fatalf("Connect() err: %v", err)
+			slog.Error("Error occured when attempting to connect to device.", "error", err)
+			os.Exit(1)
 		}
 		defer conn.Conn.Close()
 
-		var memMib string
-		var freeMib string
-		switch mib.Value {
-		case MemoryMibCiscoProcessMib:
-			memMib = cpmCpuMemoryUsedOID
-			freeMib = cpmCpuMemoryFreeOID
-		case MemoryMibCiscoMemoryPoolMib:
-			memMib = ciscoMemoryPoolUsedOID
-			freeMib = ciscoMemoryPoolFreeOID
-		}
-
 		// get memory used
-		result, err := common.BulkWalkToMap(&conn, memMib)
+		result, err := common.BulkWalkToMap(&conn, used_memory_mib)
 		if err != nil {
-			log.Fatalf("Error: %v\n", err)
-			return
+			slog.Error("BulkWalk of device failed.", "oid", used_memory_mib, "error", err)
+			os.Exit(1)
 		}
 		memUsed := make(map[int]uint32)
 		for k, v := range result {
@@ -86,10 +128,10 @@ var rootCmd = &cobra.Command{
 		}
 
 		// get memory free
-		result, err = common.BulkWalkToMap(&conn, freeMib)
+		result, err = common.BulkWalkToMap(&conn, free_memory_mib)
 		if err != nil {
-			log.Fatalf("Error: %v\n", err)
-			return
+			slog.Error("BulkWalk of device failed.", "oid", free_memory_mib, "error", err)
+			os.Exit(1)
 		}
 		memFree := make(map[int]uint32)
 		for k, v := range result {
@@ -102,7 +144,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// CISCO-MEMORY-POOL-MIB reports bytes, not kilobytes
-		if mib.Value == MemoryMibCiscoMemoryPoolMib {
+		if using_mib == MemoryMibCiscoMemoryPoolMib {
 			for k, v := range memUsed {
 				memUsed[k] = v / 1024
 			}
@@ -166,9 +208,9 @@ func init() {
 	rootCmd.PersistentFlags().VarP(&privmode, "privmode", "x", "SNMPv3 Privacy Mode")
 
 	// check specific flags
-	rootCmd.PersistentFlags().VarP(&mib, "mib", "m", "use OIDs from this MIB")
 	rootCmd.PersistentFlags().Uint32VarP(&warningThreshold, "warn", "w", 70, "warning threshold (in percent)")
 	rootCmd.PersistentFlags().Uint32VarP(&criticalThreshold, "crit", "c", 80, "critical threshold (in percent)")
+	rootCmd.PersistentFlags().Uint8Var(&maxTimesToRetryModelQuery, "max-model-query-retries", 2, "How many times to retry the initial query for model (at half second intervals)")
 }
 
 func Execute() {

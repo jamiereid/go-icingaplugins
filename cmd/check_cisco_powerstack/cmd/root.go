@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jamiereid/go-icingaplugins/internal/pkg/common"
@@ -21,6 +22,8 @@ var timeout int
 var seclevel SnmpV3MsgFlagsValue
 var authmode SnmpV3AuthProtocolValue
 var privmode SnmpV3PrivProtocolValue
+var maxTimesToRetryModelQuery uint8
+
 var doubleContainers bool
 var psuBuiltIn bool
 
@@ -32,6 +35,8 @@ var rootCmd = &cobra.Command{
 	Short: "Cisco power stack check plugin",
 	Long:  "",
 	Run: func(cmd *cobra.Command, args []string) {
+		slog.SetDefault(slog.With("target", conn.Target))
+
 		conn.Version = g.Version3
 		conn.SecurityModel = g.UserSecurityModel
 		conn.MsgFlags = seclevel.Value
@@ -41,22 +46,57 @@ var rootCmd = &cobra.Command{
 		secparams.PrivacyProtocol = privmode.Value
 		conn.SecurityParameters = secparams.Copy()
 
-		err := common.CheckConnection(&conn)
-		if err != nil {
-			log.Fatalf("%v", err)
+		//
+		// Some models need us to check different OIDs.
+		//
+		// Sometimes, this initial call can succeed, but return an empty response - which
+		// stops us from proceeding. Hence, this retry code.
+
+		var (
+			deviceModelFamily *CiscoModelFamily
+			rawDeviceModel    string
+			err               error
+		)
+
+		for attempt := 1; attempt <= int(maxTimesToRetryModelQuery); attempt++ {
+			deviceModelFamily, rawDeviceModel, err = common.GetDeviceModel(&conn)
+			if err != nil {
+				slog.Error("Problem when attempting to get the model of the device.", "error", err)
+				os.Exit(1)
+			}
+
+			if rawDeviceModel != "" {
+				break // success
+			}
+
+			slog.Warn("Got empty model string; retrying...", "attempt", attempt)
+			time.Sleep(500 * time.Millisecond)
 		}
+
+		if *deviceModelFamily == CiscoModelFamilyUnknown {
+			var message string
+			if rawDeviceModel != "" {
+				message = "This application doesn't yet know how to handle this model."
+			} else {
+				message = "Recieved an empty string when quering for the model multiple times."
+			}
+			slog.Error(message, "model", rawDeviceModel)
+			os.Exit(1)
+		}
+		slog.SetDefault(slog.With("model", rawDeviceModel, "modelFamily", deviceModelFamily))
 
 		err = conn.Connect()
 		if err != nil {
-			log.Fatalf("Connect() err: %v", err)
+			slog.Error("Problem with connecting to the device", "error", err)
+			os.Exit(1)
 		}
 		defer conn.Conn.Close()
 
 		// get cswSwitchState (switch module states)
 		result, err := common.BulkWalkToMap(&conn, cswSwitchStateOID)
 		if err != nil {
-			log.Fatalf("Error: %v\n", err)
-			return
+			slog.Error("BulkWalk of device failed.", "oid", cswSwitchStateOID, "error", err)
+			os.Exit(1)
 		}
 		cswSwitchState := make(map[int]SnmpCswSwitchState)
 		for k, v := range result {
@@ -71,8 +111,8 @@ var rootCmd = &cobra.Command{
 		// get cswStackPowerPortLinkStatus (stack power port state)
 		result2, err := common.BulkWalkToStringMap(&conn, cswStackPowerPortLinkStatusOID)
 		if err != nil {
-			log.Fatalf("Error: %v\n", err)
-			return
+			slog.Error("BulkWalk of device failed.", "oid", cswStackPowerPortLinkStatusOID, "error", err)
+			os.Exit(1)
 		}
 		cswStackPowerPortLinkStatus := make(map[string]SnmpCswStackPowerPortLinkStatus)
 		for k, v := range result2 {
@@ -104,17 +144,35 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Exit
-		var exitMsg string
+		var exitMsg strings.Builder
 
 		// @NOTE: this is not exhaustive, it has an @ASSUMPTION that this plug only ever exits WARN or OK
 		switch exitStatus {
 		case IcingaWARN:
-			exitMsg = fmt.Sprintf("Switch states: \"%s\", Power stack port statuses: \"%s\"", switchStates, stackPowerPortStatuses)
+
+			exitMsg.WriteString("Switch states are \"")
+			for it_index, it := range switchStates {
+				if it_index > 0 {
+					exitMsg.WriteString(", ")
+				}
+				exitMsg.WriteString(strings.TrimPrefix(it.String(), "SnmpCswSwitchState")) // @Speed
+			}
+
+			exitMsg.WriteString("\"; Stack power port statuses are \"")
+			for it_index, it := range stackPowerPortStatuses {
+				if it_index > 0 {
+					exitMsg.WriteString(", ")
+				}
+				exitMsg.WriteString(strings.TrimPrefix(it.String(), "SnmpCswStackPortOperState")) // @Speed
+			}
+
+			exitMsg.WriteString("\"")
+
 		case IcingaOK:
-			exitMsg = fmt.Sprintf("%d switches are \"ready\" and %d power stack ports are up", len(switchStates), len(stackPowerPortStatuses))
+			exitMsg.WriteString(fmt.Sprintf("%d switches are \"ready\" and %d power stack ports are up", len(switchStates), len(stackPowerPortStatuses)))
 		}
 
-		common.ExitPlugin(&IcingaStatus{Value: exitStatus, Message: exitMsg})
+		common.ExitPlugin(&IcingaStatus{Value: exitStatus, Message: exitMsg.String()})
 
 	},
 }
@@ -138,6 +196,9 @@ func init() {
 	rootCmd.MarkPersistentFlagRequired("privkey")
 	rootCmd.PersistentFlags().VarP(&authmode, "authmode", "a", "SNMPv3 Auth Mode")
 	rootCmd.PersistentFlags().VarP(&privmode, "privmode", "x", "SNMPv3 Privacy Mode")
+
+	// check specific flags
+	rootCmd.PersistentFlags().Uint8Var(&maxTimesToRetryModelQuery, "max-model-query-retries", 2, "How many times to retry the initial query for model (at half second intervals)")
 }
 
 func Execute() {
