@@ -45,6 +45,7 @@ var rootCmd = &cobra.Command{
 		conn.SecurityModel = g.UserSecurityModel
 		conn.MsgFlags = seclevel.Value
 		conn.Timeout = time.Duration(timeout) * time.Second
+		conn.MaxRepetitions = 10
 
 		secparams.AuthenticationProtocol = authmode.Value
 		secparams.PrivacyProtocol = privmode.Value
