@@ -15,14 +15,7 @@ import (
 	g "github.com/gosnmp/gosnmp"
 )
 
-const cswSwitchStateOID string = "1.3.6.1.4.1.9.9.500.1.2.1.1.6"
-const cswStatePortOperStatusOID string = "1.3.6.1.4.1.9.9.500.1.2.2.1.1"
-const ifDescrOID = "1.3.6.1.2.1.2.2.1.2"
-const ifAliasOID string = "1.3.6.1.2.1.31.1.1.1.18"
-const ifAdminStatusOID string = "1.3.6.1.2.1.2.2.1.7"
-const ifOperStatusOID string = "1.3.6.1.2.1.2.2.1.8"
-
-var Debug bool
+var verbosity int
 var conn g.GoSNMP
 var secparams g.UsmSecurityParameters
 var timeout int
@@ -31,12 +24,22 @@ var authmode SnmpV3AuthProtocolValue
 var privmode SnmpV3PrivProtocolValue
 var maxTimesToRetryModelQuery uint8
 
+const cswSwitchStateOID string = "1.3.6.1.4.1.9.9.500.1.2.1.1.6"
+const cswStatePortOperStatusOID string = "1.3.6.1.4.1.9.9.500.1.2.2.1.1"
+const ifDescrOID = "1.3.6.1.2.1.2.2.1.2"
+const ifAliasOID string = "1.3.6.1.2.1.31.1.1.1.18"
+const ifAdminStatusOID string = "1.3.6.1.2.1.2.2.1.7"
+const ifOperStatusOID string = "1.3.6.1.2.1.2.2.1.8"
+
 var rootCmd = &cobra.Command{
 	Use:   "check_cisco_stackmodules",
 	Short: "Cisco data stack check plugin",
 	Long:  "",
 	Run: func(cmd *cobra.Command, args []string) {
+		common.SetupLogging(verbosity)
+		//ctx := context.Background() // just here so we can log using slog.Log() with common.LevelTrace
 		slog.SetDefault(slog.With("target", conn.Target))
+		slog.Debug("Verbosity level set from cli argument", "verbosity", verbosity)
 
 		conn.Version = g.Version3
 		conn.SecurityModel = g.UserSecurityModel
@@ -59,6 +62,7 @@ var rootCmd = &cobra.Command{
 			err               error
 		)
 
+		slog.Debug("Begin attempt to get model from device.")
 		for attempt := 1; attempt <= int(maxTimesToRetryModelQuery); attempt++ {
 			deviceModelFamily, rawDeviceModel, err = common.GetDeviceModel(&conn)
 			if err != nil {
@@ -73,6 +77,7 @@ var rootCmd = &cobra.Command{
 			slog.Warn("Got empty model string; retrying...", "attempt", attempt)
 			time.Sleep(500 * time.Millisecond)
 		}
+		slog.Debug("End attempt to get model from device.")
 
 		if *deviceModelFamily == CiscoModelFamilyUnknown {
 			var message string
@@ -85,6 +90,7 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		slog.SetDefault(slog.With("model", rawDeviceModel, "modelFamily", deviceModelFamily))
+		slog.Debug("Past model check, proceeding...")
 
 		err = conn.Connect()
 		if err != nil {
@@ -92,9 +98,11 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		defer conn.Conn.Close()
+		slog.Debug("We have a connection to the device...")
 
 		// before we start to check the stack state, we should know what type of stack it is
 		traditionalStack := true
+		slog.Debug("Beginning to determine what type of stack we're dealing with, assuming a 'traditional' stack to start with.", "traditionalStack", traditionalStack)
 		cswStackTypeOID := "1.3.6.1.4.1.9.9.500.1.1.7.0" // @Note .0 is @Hardcoded here and might not be right everywhere?
 		stackTypeRaw, err := common.SnmpGet(&conn, cswStackTypeOID)
 		if err != nil {
@@ -108,10 +116,13 @@ var rootCmd = &cobra.Command{
 			if stackType > 0 {
 				// *probably* a stackwise virtual
 				traditionalStack = false
+				slog.Debug("stackType reported as higher than 0, we're dealing with something that isn't a traditional stack", "stackType", stackType)
 			}
 		}
+		slog.Debug("Stack type decision made, continuing...", "traditionalStack", traditionalStack)
 
 		// get cswSwitchState (switch module states)
+		slog.Debug("Beginning attempt to get the switch module states via snmp")
 		result, err := common.BulkWalkToMap(&conn, cswSwitchStateOID)
 		if err != nil {
 			slog.Error("BulkWalk of device failed.", "oid", cswSwitchStateOID, "error", err)
@@ -121,11 +132,12 @@ var rootCmd = &cobra.Command{
 		for it_index, it := range result {
 			v, ok := it.(int)
 			if !ok {
-				fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
+				slog.Warn("Unable to convert value to int", "oid", cswStackTypeOID, "key", it_index, "raw_value", it)
 				continue
 			}
 			cswSwitchState[it_index] = SnmpCswSwitchState(v)
 		}
+		slog.Debug("We have the switch module states.")
 
 		// Assume everything is ok, then check this assumption (See Exit below is changing this code)
 		var exitStatus IcingaStatusVal = IcingaOK
@@ -133,6 +145,7 @@ var rootCmd = &cobra.Command{
 		var svlIfStatuses []SnmpIfOperStatus
 		if traditionalStack {
 			// get cswStackPortOperStatus (stack port state)
+			slog.Debug("Beginning attempt to get stack ports operational statuses", "traditionalStack", traditionalStack, "oid", cswStatePortOperStatusOID)
 			result, err = common.BulkWalkToMap(&conn, cswStatePortOperStatusOID)
 			if err != nil {
 				slog.Error("BulkWalk of device failed.", "oid", cswStatePortOperStatusOID, "error", err)
@@ -142,7 +155,7 @@ var rootCmd = &cobra.Command{
 			for it_index, it := range result {
 				v, ok := it.(int)
 				if !ok {
-					fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
+					slog.Warn("Unable to convert value to int", "oid", cswStatePortOperStatusOID, "key", it_index, "raw_value", it)
 					continue
 				}
 				cswStackPortOperStatus[it_index] = SnmpCswStackPortOperStatus(v)
@@ -159,6 +172,7 @@ var rootCmd = &cobra.Command{
 			// unfortunatly, I haven't found a MIB that will clearly tell us the members, so
 			// we do the best we can - which isn't that good :(
 
+			slog.Debug("Beginning attempt to get stack ports operational statuses on what we're assuming is a stackwise virtual stack", "traditionalStack", traditionalStack)
 			result, err := common.BulkWalkToMap(&conn, ifAliasOID)
 			if err != nil {
 				slog.Error("BulkWalk of device failed.", "oid", ifAliasOID, "error", err)
@@ -169,7 +183,7 @@ var rootCmd = &cobra.Command{
 			for it_index, it := range result {
 				strIt, ok := it.(string)
 				if !ok {
-					fmt.Printf("Skipping key %d: value is not a string\n", it_index)
+					slog.Warn("Skipping key, value is not a string", "key", it_index)
 					continue
 				}
 
@@ -193,7 +207,7 @@ var rootCmd = &cobra.Command{
 			for it_index, it := range result {
 				v, ok := it.(int)
 				if !ok {
-					fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
+					slog.Warn("Unable to convert value to int", "oid", ifAdminStatusOID, "key", it_index, "raw_value", it)
 					continue
 				}
 				ifAdminStatus[it_index] = SnmpIfAdminStatus(v)
@@ -209,7 +223,7 @@ var rootCmd = &cobra.Command{
 			for it_index, it := range result {
 				v, ok := it.(int)
 				if !ok {
-					fmt.Printf("Value for key %d is not an int: %v\n", it_index, it)
+					slog.Warn("Unable to convert value to int", "oid", ifOperStatusOID, "key", it_index, "raw_value", it)
 					continue
 				}
 				ifOperStatus[it_index] = SnmpIfOperStatus(v)
@@ -284,13 +298,15 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "d", false, "Print debug information")
+	rootCmd.PersistentFlags().CountVarP(&verbosity, "verbose", "v", "Increase verbosity (-v, -vv, -vvv)")
 
+	// connection flags
 	rootCmd.PersistentFlags().StringVarP(&conn.Target, "host", "H", "", "Hostname or IP address to run the check against (required)")
 	rootCmd.MarkPersistentFlagRequired("host")
 	rootCmd.PersistentFlags().Uint16VarP(&conn.Port, "port", "p", 161, "Port remote device SNMP agent is listening on")
 	rootCmd.PersistentFlags().IntVarP(&timeout, "timeout", "t", 10, "Seconds to wait before timing out")
 
+	// snmpv3 flags
 	rootCmd.PersistentFlags().StringVarP(&secparams.UserName, "user", "u", "", "SNMPv3 user name (required)")
 	rootCmd.MarkPersistentFlagRequired("user")
 	rootCmd.PersistentFlags().VarP(&seclevel, "seclevel", "l", "SNMPv3 Security Level")
