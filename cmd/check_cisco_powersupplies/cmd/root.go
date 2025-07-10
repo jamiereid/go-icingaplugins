@@ -280,23 +280,36 @@ var rootCmd = &cobra.Command{
 				common.ExitPlugin(&IcingaStatus{Value: IcingaOK, Message: fmt.Sprintf("All (%d) PSUs are present and 'ON'.", numberOfExpectedPsus)})
 			}
 
-			// Check PSUs have 'on' state
+			// Check the number of PSUs that have the 'on' state
+			numberOfPsusThatAreOn := 0
 			for _, it := range psuIndices {
 				l := slog.With("index", it)
 				if modelRequiresUseOfCiscoEnvMonSupplyStateTable {
 					l.Debug("Detected model has set modelRequiresUseOfCiscoEnvMonSupplyStateTable")
 					l.Debug("Testing psu state, looking for CiscoEnvMonStateNormal", "ciscoEnvMonSupplyState[it]", ciscoEnvMonSupplyState[it])
-					if ciscoEnvMonSupplyState[it] != CiscoEnvMonStateNormal {
-						common.ExitPlugin(&IcingaStatus{Value: IcingaWARN, Message: "At least one PSU is not 'ON'."})
+					if ciscoEnvMonSupplyState[it] == CiscoEnvMonStateNormal {
+						numberOfPsusThatAreOn += 1
 					}
 				} else {
 					l.Debug("Testing psu status, looking for PowerOperTypeOn", "cefcFruPowerOperStatus[it]", cefcFruPowerOperStatus[it])
-					if cefcFruPowerOperStatus[it] != PowerOperTypeOn {
-						common.ExitPlugin(&IcingaStatus{Value: IcingaWARN, Message: "At least one PSU is not 'ON'."})
+					if cefcFruPowerOperStatus[it] == PowerOperTypeOn {
+						numberOfPsusThatAreOn += 1
 					}
 				}
 			}
-			common.ExitPlugin(&IcingaStatus{Value: IcingaOK, Message: fmt.Sprintf("All (%d) PSUs are present and 'ON'.", numberOfPsus)})
+			slog.Debug("Finished counting PSUs that have 'on' state.", "numberOfPsusThatAreOn", numberOfPsusThatAreOn, "numberOfExpectedPsus", numberOfExpectedPsus)
+
+			if psuExpectedOverrideValue > 0 {
+				numberOfExpectedPsus = int(psuExpectedOverrideValue)
+				slog.Debug("User set PSU expected value as argument, so we've overwritten numberOfExpectedPsus", "psuExpectedOverrideValue", psuExpectedOverrideValue, "numberOfExpectedPsus", numberOfExpectedPsus)
+			}
+
+			if numberOfPsusThatAreOn == numberOfExpectedPsus {
+				common.ExitPlugin(&IcingaStatus{Value: IcingaOK, Message: fmt.Sprintf("All (%d) PSUs are present and 'ON'.", numberOfExpectedPsus)})
+			} else {
+				common.ExitPlugin(&IcingaStatus{Value: IcingaWARN, Message: "At least one PSU is not 'ON'."})
+			}
+
 		case numberOfPsus == 1:
 			common.ExitPlugin(&IcingaStatus{Value: IcingaWARN, Message: "Only one PSU is present."})
 		case numberOfPsus < numberOfExpectedPsus:
